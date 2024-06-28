@@ -39,7 +39,7 @@ def batch_tokenize_pretokenized_input(
     for words in batch_words:
         chunk = input_ids[ofs : ofs + len(words)]
         ids = list(chain.from_iterable(chunk))
-        offsets = list(chain.from_iterable([i] * len(ids) for i, ids in enumerate(chunk)))
+        offsets = list(chain.from_iterable([i] * len(c) for i, c in enumerate(chunk)))
         ret.append((ids, offsets))
         ofs += len(words)
     assert ofs == len(input_ids)
@@ -57,7 +57,9 @@ def disable_add_prefix_space(tokenizer):
         tokenizer.add_prefix_space = False
 
     if (add_prefix_space or tokenizer.init_kwargs.get("add_prefix_space")) or tokenizer.is_fast:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer.name_or_path, add_prefix_space=False)
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer.name_or_path, use_fast=True, add_prefix_space=False
+        )
 
     yield tokenizer
 
