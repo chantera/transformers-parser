@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from itertools import chain
 from typing import List, Tuple
 
@@ -18,15 +19,8 @@ def batch_tokenize_pretokenized_input(
     batch_words: List[List[str]],
     tokenizer: PreTrainedTokenizerBase,
 ) -> List[Tuple[List[int], List[int]]]:
-    add_prefix_space = None
-    if hasattr(tokenizer, "add_prefix_space"):
-        add_prefix_space = tokenizer.add_prefix_space
-        if add_prefix_space:
-            batch_text = [" " + text if not text[0].isspace() else text for text in batch_text]
-        tokenizer.add_prefix_space = False  # disable adding prefix space
-
-    if tokenizer.is_fast:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer.name_or_path, add_prefix_space=False)
+    if getattr(tokenizer, "add_prefix_space", tokenizer.init_kwargs.get("add_prefix_space")):
+        batch_text = [" " + text if not text[0].isspace() else text for text in batch_text]
 
     text_input = []
     for text, words in zip(batch_text, batch_words):
@@ -37,7 +31,8 @@ def batch_tokenize_pretokenized_input(
             ofs = end
         assert ofs == len(text)
 
-    input_ids = tokenizer(text_input, add_special_tokens=False)["input_ids"]
+    with disable_add_prefix_space(tokenizer) as _tokenizer:
+        input_ids = _tokenizer(text_input, add_special_tokens=False)["input_ids"]
 
     ret = []
     ofs = 0
@@ -49,7 +44,22 @@ def batch_tokenize_pretokenized_input(
         ofs += len(words)
     assert ofs == len(input_ids)
 
-    if add_prefix_space is not None:
-        tokenizer.add_prefix_space = add_prefix_space
-
     return ret
+
+
+@contextmanager
+def disable_add_prefix_space(tokenizer):
+    _tokenizer = tokenizer
+
+    add_prefix_space = None
+    if hasattr(tokenizer, "add_prefix_space"):
+        add_prefix_space = tokenizer.add_prefix_space
+        tokenizer.add_prefix_space = False
+
+    if (add_prefix_space or tokenizer.init_kwargs.get("add_prefix_space")) or tokenizer.is_fast:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer.name_or_path, add_prefix_space=False)
+
+    yield tokenizer
+
+    if add_prefix_space is not None:
+        _tokenizer.add_prefix_space = add_prefix_space
