@@ -1,3 +1,4 @@
 torch == 2.*
 transformers[torch] == 4.*
 datasets == 2.*
+nltk
