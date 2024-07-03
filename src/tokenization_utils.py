@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from functools import lru_cache
 from itertools import chain
 from typing import List, Optional, Tuple
 
@@ -69,14 +70,17 @@ def disable_add_prefix_space(tokenizer):
         tokenizer.add_prefix_space = False
 
     if (add_prefix_space or tokenizer.init_kwargs.get("add_prefix_space")) or tokenizer.is_fast:
-        tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer.name_or_path, use_fast=True, add_prefix_space=False
-        )
+        tokenizer = _get_tokenizer(tokenizer.name_or_path, use_fast=True, add_prefix_space=False)
 
     yield tokenizer
 
     if add_prefix_space is not None:
         _tokenizer.add_prefix_space = add_prefix_space
+
+
+@lru_cache
+def _get_tokenizer(name_or_path, **kwargs):
+    return AutoTokenizer.from_pretrained(name_or_path, **kwargs)
 
 
 def batch_prepare_for_model(

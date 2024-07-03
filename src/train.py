@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -8,12 +9,14 @@ from transformers import (
     AutoConfig,
     AutoModel,
     AutoTokenizer,
+    DataCollatorWithPadding,
     HfArgumentParser,
     Trainer,
     TrainingArguments,
     set_seed,
 )
 
+from models import BertForParsing
 from tokenization_utils import batch_prepare_for_model, batch_tokenize_pretokenized_input
 from training_utils import LoggerCallback, setup_logger
 
@@ -34,23 +37,17 @@ def main(args: Arguments, training_args: TrainingArguments):
     logger.info(f"training args: {training_args}")
     set_seed(training_args.seed)
 
-    config = AutoConfig.from_pretrained(args.model)
+    raw_dataset = load_dataset(args.dataset, detokenize=True, cache_dir=args.cache_dir)
+    label_list = raw_dataset["train"].features["deprel"].feature.names
+
+    config = AutoConfig.from_pretrained(args.model, num_labels=len(label_list))
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
-    raw_dataset = load_dataset(args.dataset, detokenize=True, cache_dir=args.cache_dir)
-
-    def preprocess(examples):
-        batch_input_ids, batch_offsets = batch_tokenize_pretokenized_input(
-            examples["text"], examples["form"], tokenizer
-        )
-        features = batch_prepare_for_model(batch_input_ids, tokenizer)
-        features["word_offsets"] = batch_offsets
-        return features
-
     with training_args.main_process_first(desc="dataset map pre-processing"):
-        dataset = raw_dataset.map(preprocess, batched=True, load_from_cache_file=False)
+        dataset = raw_dataset.map(partial(preprocess, tokenizer=tokenizer), batched=True)
 
-    model = AutoModel.from_pretrained(args.model, config=config)
+    # model = AutoModel.from_pretrained(args.model, config=config)
+    model = BertForParsing.from_pretrained(args.model, config=config)
 
     trainer = Trainer(
         model=model,
@@ -58,6 +55,7 @@ def main(args: Arguments, training_args: TrainingArguments):
         args=training_args,
         train_dataset=dataset.get("train"),
         eval_dataset=dataset.get("validation"),
+        data_collator=DataCollator(tokenizer),
     )
     trainer.add_callback(LoggerCallback(logger))
 
@@ -83,6 +81,71 @@ def main(args: Arguments, training_args: TrainingArguments):
 
     if training_args.do_predict:
         pass  # do nothing
+
+
+def preprocess(examples, tokenizer):
+    batch_input_ids, batch_offsets = batch_tokenize_pretokenized_input(
+        examples["text"], examples["form"], tokenizer
+    )
+    features = batch_prepare_for_model(batch_input_ids, tokenizer)
+
+    has_prefix = False
+    first_token = features["input_ids"][0][0]
+    if first_token == tokenizer.cls_token_id or first_token == tokenizer.bos_token_id:
+        has_prefix = True
+    else:
+        raise ValueError("prefix token is needed to be used as a dummy root")
+
+    has_suffix = False
+    last_token = features["input_ids"][0][-1]
+    if last_token == tokenizer.sep_token_id or last_token == tokenizer.eos_token_id:
+        has_suffix = True
+
+    for offsets in batch_offsets:
+        if has_prefix:
+            offsets[:] = [0] + [ofs + 1 for ofs in offsets]
+        if has_suffix:
+            offsets.append(-100)
+
+    features["word_offsets"] = batch_offsets
+    assert all(
+        len(input_ids) == len(offsets)
+        for input_ids, offsets in zip(features["input_ids"], features["word_offsets"])
+    )
+
+    features["heads"] = [[-100] + heads for heads in examples["head"]]
+    features["relations"] = [[-100] + relations for relations in examples["deprel"]]
+
+    return features
+
+
+class DataCollator(DataCollatorWithPadding):
+    def __call__(self, features):
+        features = [f.copy() for f in features]
+
+        extra_fields = {}
+        extra_field_names = {"word_offsets", "heads", "relations"}
+        for k in list(features[0].keys()):
+            if k in extra_field_names:
+                extra_fields[k] = [f.pop(k) for f in features]
+
+        batch = super().__call__(features)
+        batch.update(extra_fields)
+
+        def pad_to_max_length(xs, max_length):
+            if self.tokenizer.padding_side == "right":
+                xs = [x + [-100] * (max_length - len(x)) for x in xs]
+            else:
+                xs = [[-100] * (max_length - len(x)) + x for x in xs]
+            return xs
+
+        max_token_length = len(batch["input_ids"][0])
+        max_word_length = max(max(offsets) for offsets in batch["word_offsets"]) + 1
+        batch["word_offsets"] = pad_to_max_length(batch["word_offsets"], max_token_length)
+        batch["heads"] = pad_to_max_length(batch["heads"], max_word_length)
+        batch["relations"] = pad_to_max_length(batch["relations"], max_word_length)
+
+        return batch.convert_to_tensors(self.return_tensors)
 
 
 if __name__ == "__main__":
