@@ -27,9 +27,9 @@ class PairwiseBilinear(nn.Module):
         self.in1_features = in1_features
         self.in2_features = in2_features
         self.out_features = out_features
-        self.weight = nn.Parameter(torch.Tensor(in1_features, out_features, in2_features))
+        self.weight = nn.Parameter(torch.empty(in1_features, out_features, in2_features))
         if bias:
-            self.bias = nn.Parameter(torch.Tensor(out_features))
+            self.bias = nn.Parameter(torch.empty(out_features))
         else:
             self.register_parameter("bias", None)
         self.reset_parameters()
@@ -140,6 +140,12 @@ class BertForParsing(BertPreTrainedModel):
 
         self.post_init()
 
+    def _init_weights(self, module):
+        if isinstance(module, PairwiseBilinear):
+            module.reset_parameters()
+        else:
+            super()._init_weights(module)
+
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
@@ -177,23 +183,40 @@ class BertForParsing(BertPreTrainedModel):
         head_logits = _mask_arc(head_logits, word_lengths, mask_diag=False)
         relation_logits = self.relation_scorer(hidden_states)
 
-        total_loss = None
+        loss = None
         if heads is not None and relations is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            head_loss = loss_fct(head_logits.view(-1, head_logits.size(-1)), heads.view(-1))
-            total_loss = head_loss
+            loss = _compute_loss(head_logits, relation_logits, heads, relations)
 
         if not return_dict:
             output = (head_logits, relation_logits) + outputs[2:]
-            return ((total_loss,) + output) if total_loss is not None else output
+            return ((loss,) + output) if loss is not None else output
 
         return ParsingModelOutput(
-            loss=total_loss,
+            loss=loss,
             head_logits=head_logits,
             relation_logits=relation_logits,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+
+def _compute_loss(
+    head_logits: torch.Tensor,
+    relation_logits: torch.Tensor,
+    heads: torch.Tensor,
+    relations: torch.Tensor,
+) -> torch.Tensor:
+    loss_fct = nn.CrossEntropyLoss()
+    head_loss = loss_fct(head_logits.view(-1, head_logits.size(-1)), heads.view(-1))
+
+    gather_index = heads.masked_fill(heads == -100, 0).view(*heads.size(), 1, 1)
+    gather_index = gather_index.expand(-1, -1, -1, relation_logits.size(-1))
+    relation_logits = torch.gather(relation_logits, dim=2, index=gather_index)
+    relation_loss = loss_fct(
+        relation_logits.view(-1, relation_logits.size(-1)), relations.view(-1)
+    )
+
+    return head_loss + relation_loss
 
 
 def _mask_arc(
