@@ -11,14 +11,17 @@ from transformers import (
     AutoTokenizer,
     DataCollatorWithPadding,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     set_seed,
 )
+from transformers.utils import check_min_version
 
 from models import BertForParsing
 from tokenization_utils import batch_prepare_for_model, batch_tokenize_pretokenized_input
+from trainer import Trainer
 from training_utils import LoggerCallback, setup_logger
+
+check_min_version("4.40.0")
 
 logger = logging.getLogger(__name__)
 
