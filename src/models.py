@@ -180,7 +180,7 @@ class BertForParsing(BertPreTrainedModel):
 
         word_lengths = word_offsets.max(dim=1)[0] + 1
         head_logits = self.head_scorer(hidden_states).squeeze(-1)
-        head_logits = _mask_arc(head_logits, word_lengths, mask_diag=False)
+        head_logits = _mask_arc(head_logits, word_lengths)
         relation_logits = self.relation_scorer(hidden_states)
 
         loss = None
@@ -209,18 +209,17 @@ def _compute_loss(
     loss_fct = nn.CrossEntropyLoss()
     head_loss = loss_fct(head_logits.view(-1, head_logits.size(-1)), heads.view(-1))
 
-    gather_index = heads.masked_fill(heads == -100, 0).view(*heads.size(), 1, 1)
-    gather_index = gather_index.expand(-1, -1, -1, relation_logits.size(-1))
-    relation_logits = torch.gather(relation_logits, dim=2, index=gather_index)
+    indices = heads.masked_fill(heads == -100, 0)[..., None, None]
     relation_loss = loss_fct(
-        relation_logits.view(-1, relation_logits.size(-1)), relations.view(-1)
+        torch.take_along_dim(relation_logits, indices, dim=2).view(-1, relation_logits.size(-1)),
+        relations.view(-1),
     )
 
     return head_loss + relation_loss
 
 
 def _mask_arc(
-    logits: torch.Tensor, lengths: torch.Tensor, mask_diag: bool = True
+    logits: torch.Tensor, lengths: torch.Tensor, mask_diag: bool = False
 ) -> Optional[torch.Tensor]:
     with torch.no_grad():
         batch_size, max_length = lengths.numel(), lengths.max()
