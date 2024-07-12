@@ -185,6 +185,12 @@ class BertForParsing(BertPreTrainedModel):
 
         loss = None
         if heads is not None and relations is not None:
+            # Expand logits to the maximum word length (needed for `torch.nn.DataParallel`)
+            if head_logits.size(1) < heads.size(1):
+                head_logits = _expand_logits(head_logits, heads.size(1))
+            if relation_logits.size(1) < relations.size(1):
+                relation_logits = _expand_logits(relation_logits, relations.size(1))
+
             loss = _compute_loss(head_logits, relation_logits, heads, relations)
 
         if not return_dict:
@@ -230,3 +236,11 @@ def _mask_arc(
             mask.masked_fill_(torch.eye(max_length, dtype=torch.bool), 0)
 
     return logits.masked_fill(mask.logical_not().to(logits.device), -float("inf"))
+
+
+def _expand_logits(logits: torch.Tensor, length: int) -> torch.Tensor:
+    size = logits.size()
+    new_size = (size[0], length, length) + size[3:]
+    new_logits = torch.full(new_size, -float("inf"), device=logits.device)
+    new_logits[:, : size[1], : size[2]] = logits
+    return new_logits
