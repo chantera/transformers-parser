@@ -145,8 +145,9 @@ class WordPooler(nn.Module):
 
 
 class BertForParsing(BertPreTrainedModel):
-    def __init__(self, config):
+    def __init__(self, config, max_word_length: Optional[int] = None):
         super().__init__(config)
+        self.max_word_length = max_word_length
 
         self.bert = BertModel(config, add_pooling_layer=False)
         self.pooler = WordPooler()
@@ -198,15 +199,28 @@ class BertForParsing(BertPreTrainedModel):
         head_logits = _mask_arc(head_logits, word_lengths)
         relation_logits = self.relation_scorer(hidden_states)
 
+        max_word_length = word_lengths.max().item()
+        max_word_length_in_batch = heads.size(1) if heads is not None else max_word_length
+        assert max_word_length <= max_word_length_in_batch
+
         loss = None
         if heads is not None and relations is not None:
-            # Expand logits to the maximum word length (needed for `torch.nn.DataParallel`)
-            if head_logits.size(1) < heads.size(1):
-                head_logits = _expand_logits(head_logits, heads.size(1))
-            if relation_logits.size(1) < relations.size(1):
-                relation_logits = _expand_logits(relation_logits, relations.size(1))
+            # Trim heads and relations exceeding max_word_length (in the case of using `torch.nn.DataParallel`)
+            if max_word_length < max_word_length_in_batch:
+                heads = heads[:, :max_word_length].contiguous()
+                relations = relations[:, :max_word_length].contiguous()
 
             loss = _compute_loss(head_logits, relation_logits, heads, relations)
+
+        output_length = max_word_length_in_batch
+        if self.max_word_length is not None:
+            if self.max_word_length < output_length:
+                raise ValueError(f"logits size exceeds max_word_length={self.max_word_length}")
+            output_length = self.max_word_length
+
+        if max_word_length < output_length:
+            head_logits = _expand_logits(head_logits, output_length)
+            relation_logits = _expand_logits(relation_logits, output_length)
 
         if not return_dict:
             output = (head_logits, relation_logits) + outputs[2:]
