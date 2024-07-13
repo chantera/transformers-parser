@@ -19,7 +19,8 @@ class ParsingModelOutput(ModelOutput):
 
 class PairwiseBilinear(nn.Module):
     """
-    https://github.com/stanfordnlp/stanza/blob/v1.1.1/stanza/models/common/biaffine.py#L5  # noqa
+    https://github.com/stanfordnlp/stanza/blob/v1.1.1/stanza/models/common/biaffine.py#L5
+    https://pytorch.org/docs/2.3/_modules/torch/nn/modules/linear.html#Bilinear
     """
 
     def __init__(self, in1_features: int, in2_features: int, out_features: int, bias: bool = True):
@@ -59,9 +60,11 @@ class PairwiseBilinear(nn.Module):
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, output_size=None):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = nn.Linear(
+            config.hidden_size, output_size if output_size is not None else config.hidden_size
+        )
         self.activation = nn.ReLU()
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -73,13 +76,25 @@ class FeedForward(torch.nn.Module):
 class BiaffineScorer(nn.Module):
     def __init__(self, config, num_labels):
         super().__init__()
-        self.intermediate1 = FeedForward(config)
-        self.intermediate2 = FeedForward(config)
-        self.attention = PairwiseBilinear(config.hidden_size, config.hidden_size, num_labels)
+
+        intermediate_size = getattr(config, "classifier_hidden_size", None)
+        if intermediate_size is None:
+            intermediate_size = config.hidden_size // 2
+
+        dropout_prob = getattr(config, "classifier_dropout", None)
+        if dropout_prob is None:
+            dropout_prob = config.hidden_dropout_prob
+
+        self.intermediate1 = FeedForward(config, intermediate_size)
+        self.intermediate2 = FeedForward(config, intermediate_size)
+        self.dropout = nn.Dropout(dropout_prob)
+        self.attention = PairwiseBilinear(intermediate_size, intermediate_size, num_labels)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states1 = self.intermediate1(hidden_states)
+        hidden_states1 = self.dropout(hidden_states1)
         hidden_states2 = self.intermediate2(hidden_states)
+        hidden_states2 = self.dropout(hidden_states2)
         return self.attention(hidden_states1, hidden_states2)
 
 
