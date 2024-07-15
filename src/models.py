@@ -145,9 +145,9 @@ class WordPooler(nn.Module):
 
 
 class BertForParsing(BertPreTrainedModel):
-    def __init__(self, config, max_word_length: Optional[int] = None):
+    def __init__(self, config, output_length: Optional[int] = None):
         super().__init__(config)
-        self.max_word_length = max_word_length
+        self.output_length = output_length
 
         self.bert = BertModel(config, add_pooling_layer=False)
         self.pooler = WordPooler()
@@ -199,26 +199,26 @@ class BertForParsing(BertPreTrainedModel):
         head_logits = _mask_arc(head_logits, word_lengths)
         relation_logits = self.relation_scorer(hidden_states)
 
-        max_word_length = word_lengths.max().item()
-        max_word_length_in_batch = heads.size(1) if heads is not None else max_word_length
-        assert max_word_length <= max_word_length_in_batch
+        max_seq_length = word_lengths.max().item()
+        max_seq_length_in_batch = heads.size(1) if heads is not None else max_seq_length
+        assert max_seq_length <= max_seq_length_in_batch
 
         loss = None
         if heads is not None and relations is not None:
-            # Trim heads and relations exceeding max_word_length (in the case of using `torch.nn.DataParallel`)
-            if max_word_length < max_word_length_in_batch:
-                heads = heads[:, :max_word_length].contiguous()
-                relations = relations[:, :max_word_length].contiguous()
+            # Trim heads and relations exceeding max_seq_length (in the case of using `torch.nn.DataParallel`)
+            if max_seq_length < max_seq_length_in_batch:
+                heads = heads[:, :max_seq_length].contiguous()
+                relations = relations[:, :max_seq_length].contiguous()
 
             loss = _compute_loss(head_logits, relation_logits, heads, relations)
 
-        output_length = max_word_length_in_batch
-        if self.max_word_length is not None:
-            if self.max_word_length < output_length:
-                raise ValueError(f"logits size exceeds max_word_length={self.max_word_length}")
-            output_length = self.max_word_length
+        output_length = max_seq_length_in_batch
+        if self.output_length is not None:
+            if self.output_length < output_length:
+                raise ValueError(f"logits size exceeds output_length={self.output_length}")
+            output_length = self.output_length
 
-        if max_word_length < output_length:
+        if max_seq_length < output_length:
             head_logits = _expand_logits(head_logits, output_length)
             relation_logits = _expand_logits(relation_logits, output_length)
 

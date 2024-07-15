@@ -4,15 +4,19 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 import transformers
+from transformers.training_args import ParallelMode
 
 from chuliu_edmonds import chuliu_edmonds_one_root
-
-_DEFAULT_MAX_WORD_LENGTH = 128
 
 
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
-    max_word_length: int = _DEFAULT_MAX_WORD_LENGTH
+    output_logits_length: Optional[int] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.parallel_mode == ParallelMode.DISTRIBUTED and self.output_logits_length is None:
+            raise ValueError("`output_logits_length` must be specified in distributed training")
 
 
 class Trainer(transformers.Trainer):
@@ -20,6 +24,7 @@ class Trainer(transformers.Trainer):
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("compute_metrics", self._compute_metrics)
+        kwargs.setdefault("preprocess_logits_for_metrics", self._preprocess_logits_for_metrics)
         super().__init__(*args, **kwargs)
 
         if (
@@ -29,29 +34,14 @@ class Trainer(transformers.Trainer):
         ) and self.args.eval_do_concat_batches:
             raise ValueError("`eval_do_concat_batches` is not supported.")
 
+        self._output_length = getattr(self.args, "output_logits_length", None)
+        if self.args.parallel_mode == ParallelMode.DISTRIBUTED and self._output_length is None:
+            raise ValueError(
+                "`args.output_logits_length` must be specified in distributed training"
+            )
+
         if not self.label_names:
             self.label_names = self.DEFAULT_LABEL_NAMES
-
-        self._max_word_length = getattr(self.args, "max_word_length", _DEFAULT_MAX_WORD_LENGTH)
-
-    def compute_loss(self, model, inputs, return_outputs=False):
-        ret = super().compute_loss(model, inputs, return_outputs)
-
-        if not return_outputs:
-            return ret
-
-        loss, outputs = ret
-
-        def _pad(x):
-            return pad(x, self._max_word_length, -float("inf"), dim=2)
-
-        if isinstance(outputs, dict):
-            outputs["head_logits"] = _pad(outputs["head_logits"])
-            outputs["relation_logits"] = _pad(outputs["relation_logits"])
-        else:
-            outputs = outputs[:1] + (_pad(outputs[1]), _pad(outputs[2])) + outputs[3:]
-
-        return loss, outputs
 
     def _compute_metrics(self, p: transformers.EvalPrediction):
         head_count, relation_count, uas_count, las_count, total = 0, 0, 0, 0, 0
@@ -82,6 +72,15 @@ class Trainer(transformers.Trainer):
             "UAS": uas_count / total,
             "LAS": las_count / total,
         }
+
+    def _preprocess_logits_for_metrics(self, logits, labels):
+        if self._output_length is None:
+            return logits
+
+        head_logits, relation_logits = logits[:2]
+        head_logits = pad(head_logits, self._output_length, -float("inf"), dim=2)
+        relation_logits = pad(relation_logits, self._output_length, -float("inf"), dim=2)
+        return (head_logits, relation_logits) + logits[2:]
 
 
 def pad(input: torch.Tensor, length: int, value: float, dim: int = -1) -> torch.Tensor:
