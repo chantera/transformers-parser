@@ -1,9 +1,18 @@
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
+import torch
 import transformers
 
 from chuliu_edmonds import chuliu_edmonds_one_root
+
+_DEFAULT_MAX_WORD_LENGTH = 128
+
+
+@dataclass
+class TrainingArguments(transformers.TrainingArguments):
+    max_word_length: int = _DEFAULT_MAX_WORD_LENGTH
 
 
 class Trainer(transformers.Trainer):
@@ -22,6 +31,27 @@ class Trainer(transformers.Trainer):
 
         if not self.label_names:
             self.label_names = self.DEFAULT_LABEL_NAMES
+
+        self._max_word_length = getattr(self.args, "max_word_length", _DEFAULT_MAX_WORD_LENGTH)
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        ret = super().compute_loss(model, inputs, return_outputs)
+
+        if not return_outputs:
+            return ret
+
+        loss, outputs = ret
+
+        def _pad(x):
+            return pad(x, self._max_word_length, -float("inf"), dim=2)
+
+        if isinstance(outputs, dict):
+            outputs["head_logits"] = _pad(outputs["head_logits"])
+            outputs["relation_logits"] = _pad(outputs["relation_logits"])
+        else:
+            outputs = outputs[:1] + (_pad(outputs[1]), _pad(outputs[2])) + outputs[3:]
+
+        return loss, outputs
 
     def _compute_metrics(self, p: transformers.EvalPrediction):
         head_count, relation_count, uas_count, las_count, total = 0, 0, 0, 0, 0
@@ -54,6 +84,16 @@ class Trainer(transformers.Trainer):
         }
 
 
+def pad(input: torch.Tensor, length: int, value: float, dim: int = -1) -> torch.Tensor:
+    dim = dim if dim >= 0 else input.dim() + dim
+    size = input.size(dim)
+    if size > length:
+        raise ValueError(f"input size ({size}) is greater than the specified length ({length})")
+
+    p = (0, 0) * (input.dim() - dim - 1) + (0, length - size)
+    return torch.nn.functional.pad(input, p, mode="constant", value=value)
+
+
 def compute_accuracy(
     y: np.ndarray, t: np.ndarray, ignore_index: Optional[int] = None
 ) -> Tuple[int, int]:
@@ -78,7 +118,7 @@ def parse(
     mask = np.zeros_like(head_logits)
     for i, length in enumerate(lengths):
         mask[i, :length, :length] = 1
-    mask[:, np.arange(mask.shape[1]), np.arange(mask.shape[2])] = 0
+    mask[:, np.arange(mask.shape[1]), np.arange(mask.shape[1])] = 0
 
     def softmax(x, axis=-1):
         y = np.exp(x - x.max(axis=axis, keepdims=True))
