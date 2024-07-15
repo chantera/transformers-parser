@@ -7,18 +7,16 @@ from typing import Optional
 from datasets import load_dataset
 from transformers import (
     AutoConfig,
-    AutoModel,
     AutoTokenizer,
     DataCollatorWithPadding,
     HfArgumentParser,
-    TrainingArguments,
     set_seed,
 )
 from transformers.utils import check_min_version
 
 from models import BertForParsing
 from tokenization_utils import batch_prepare_for_model, batch_tokenize_pretokenized_input
-from trainer import Trainer
+from trainer import Trainer, TrainingArguments
 from training_utils import LoggerCallback, setup_logger
 
 check_min_version("4.40.0")
@@ -44,6 +42,8 @@ def main(args: Arguments, training_args: TrainingArguments):
     label_list = raw_dataset["train"].features["deprel"].feature.names
 
     config = AutoConfig.from_pretrained(args.model, num_labels=len(label_list))
+    config.classifier_hidden_size = 512
+    config.classifier_dropout = 0.5
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
     with training_args.main_process_first(desc="dataset map pre-processing"):
@@ -142,11 +142,11 @@ class DataCollator(DataCollatorWithPadding):
                 xs = [[-100] * (max_length - len(x)) + x for x in xs]
             return xs
 
-        max_token_length = len(batch["input_ids"][0])
-        max_word_length = max(max(offsets) for offsets in batch["word_offsets"]) + 1
-        batch["word_offsets"] = pad_to_max_length(batch["word_offsets"], max_token_length)
-        batch["heads"] = pad_to_max_length(batch["heads"], max_word_length)
-        batch["relations"] = pad_to_max_length(batch["relations"], max_word_length)
+        token_seq_length = len(batch["input_ids"][0])
+        word_seq_length = max(max(offsets) for offsets in batch["word_offsets"]) + 1
+        batch["word_offsets"] = pad_to_max_length(batch["word_offsets"], token_seq_length)
+        batch["heads"] = pad_to_max_length(batch["heads"], word_seq_length)
+        batch["relations"] = pad_to_max_length(batch["relations"], word_seq_length)
 
         return batch.convert_to_tensors(self.return_tensors)
 

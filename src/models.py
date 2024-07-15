@@ -205,7 +205,7 @@ class BertForParsing(BertPreTrainedModel):
 
         loss = None
         if heads is not None and relations is not None:
-            # Trim heads and relations exceeding max_seq_length (in the case of using `torch.nn.DataParallel`)
+            # Trim heads and relations exceeding max_seq_length (in the case of using `torch.nn.DataParallel`)  # noqa
             if max_seq_length < max_seq_length_in_batch:
                 heads = heads[:, :max_seq_length].contiguous()
                 relations = relations[:, :max_seq_length].contiguous()

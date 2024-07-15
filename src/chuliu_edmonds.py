@@ -1,5 +1,6 @@
 # https://github.com/stanfordnlp/stanza/blob/v1.1.1/stanza/models/common/chuliu_edmonds.py # noqa
 
+# ruff: noqa: E501
 # fmt: off
 
 import numpy as np
