@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -43,8 +43,11 @@ class Trainer(transformers.Trainer):
         if not self.label_names:
             self.label_names = self.DEFAULT_LABEL_NAMES
 
+        self.last_prediction = None
+
     def _compute_metrics(self, p: transformers.EvalPrediction):
         head_count, relation_count, uas_count, las_count, total = 0, 0, 0, 0, 0
+        outputs: List[Tuple[np.ndarray, np.ndarray]] = []
 
         for predictions, labels in zip(p.predictions, p.label_ids):
             head_logits, relation_logits = predictions[:2]
@@ -66,12 +69,19 @@ class Trainer(transformers.Trainer):
             las_count += np.logical_and(correct_heads, correct_relations).sum()
             total += (lengths - 1).sum()
 
-        return {
+            outputs.extend(
+                (pred_heads[i, :n], pred_relations[i, :n]) for i, n in enumerate(lengths)
+            )
+
+        metrics = {
             "head_accuracy": head_count / total,
             "relation_accuracy": relation_count / total,
             "UAS": uas_count / total,
             "LAS": las_count / total,
         }
+        self.last_prediction = outputs
+
+        return metrics
 
     def _preprocess_logits_for_metrics(self, logits, labels):
         if self._output_length is None:

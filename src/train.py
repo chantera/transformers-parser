@@ -1,3 +1,4 @@
+import json
 import logging
 from dataclasses import dataclass
 from functools import partial
@@ -10,6 +11,7 @@ from transformers import (
     AutoTokenizer,
     DataCollatorWithPadding,
     HfArgumentParser,
+    PretrainedConfig,
     set_seed,
 )
 from transformers.utils import check_min_version
@@ -39,16 +41,20 @@ def main(args: Arguments, training_args: TrainingArguments):
     set_seed(training_args.seed)
 
     raw_dataset = load_dataset(args.dataset, detokenize=True, cache_dir=args.cache_dir)
-    label_list = raw_dataset["train"].features["deprel"].feature.names
 
-    config = AutoConfig.from_pretrained(args.model, num_labels=len(label_list))
-    config.classifier_hidden_size = 512
-    config.classifier_dropout = 0.5
+    config = AutoConfig.from_pretrained(args.model)
+    if config.label2id == PretrainedConfig().label2id:
+        label_list = raw_dataset["train"].features["deprel"].feature.names
+        config.label2id = {label: i for i, label in enumerate(label_list)}
+        config.id2label = {i: label for i, label in enumerate(label_list)}
+
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
     with training_args.main_process_first(desc="dataset map pre-processing"):
         dataset = raw_dataset.map(partial(preprocess, tokenizer=tokenizer), batched=True)
 
+    config.classifier_hidden_size = 512
+    config.classifier_dropout = 0.5
     # model = AutoModel.from_pretrained(args.model, config=config)
     model = BertForParsing.from_pretrained(args.model, config=config)
 
@@ -82,8 +88,22 @@ def main(args: Arguments, training_args: TrainingArguments):
         if training_args.save_strategy != "no":
             trainer.save_metrics("eval", metrics)
 
+        if trainer.is_world_process_zero():
+            output_file = Path(training_args.output_dir).joinpath("eval_predictions.jsonl")
+            with open(output_file, mode="w") as f:
+                dump(f, raw_dataset["validation"], trainer.last_prediction, config.id2label)
+
     if training_args.do_predict:
-        pass  # do nothing
+        result = trainer.predict(dataset["test"])
+        logger.info(f"predict metrics: {result.metrics}")
+        trainer.log_metrics("predict", result.metrics)
+        if training_args.save_strategy != "no":
+            trainer.save_metrics("predict", result.metrics)
+
+        if trainer.is_world_process_zero():
+            output_file = Path(training_args.output_dir).joinpath("test_predictions.jsonl")
+            with open(output_file, mode="w") as f:
+                dump(f, raw_dataset["test"], trainer.last_prediction, config.id2label)
 
 
 def preprocess(examples, tokenizer):
@@ -149,6 +169,18 @@ class DataCollator(DataCollatorWithPadding):
         batch["relations"] = pad_to_max_length(batch["relations"], word_seq_length)
 
         return batch.convert_to_tensors(self.return_tensors)
+
+
+def dump(writer, dataset, predictions, id2label):
+    encoder = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
+    assert len(dataset) == len(predictions)
+    for example, (heads, relations) in zip(dataset, predictions):
+        assert len(heads) == len(relations) == len(example["form"]) + 1
+        output = example.copy()
+        output["head"] = heads[1:].tolist()
+        output["deprel"] = [id2label[relation] for relation in relations[1:].tolist()]
+        writer.write(encoder.encode(output))
+        writer.write("\n")
 
 
 if __name__ == "__main__":
