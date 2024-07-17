@@ -257,19 +257,18 @@ def _mask_arc(
     logits: torch.Tensor, lengths: torch.Tensor, mask_diag: bool = False
 ) -> Optional[torch.Tensor]:
     with torch.no_grad():
-        batch_size, max_length = lengths.numel(), lengths.max()
-        mask = torch.zeros(batch_size, max_length, max_length)
+        mask = torch.zeros_like(logits)
         for i, length in enumerate(lengths):
             mask[i, :length, :length] = 1
         if mask_diag:
-            mask.masked_fill_(torch.eye(max_length, dtype=torch.bool), 0)
+            mask[:, torch.arange(mask.size(1)), torch.arange(mask.size(1))] = 0
 
-    return logits.masked_fill(mask.logical_not().to(logits.device), -float("inf"))
+    return logits + (1.0 - mask) * torch.finfo(logits.dtype).min
 
 
 def _expand_logits(logits: torch.Tensor, length: int) -> torch.Tensor:
     size = logits.size()
     new_size = (size[0], length, length) + size[3:]
-    new_logits = torch.full(new_size, -float("inf"), device=logits.device)
+    new_logits = torch.full(new_size, torch.finfo(logits.dtype).min, device=logits.device)
     new_logits[:, : size[1], : size[2]] = logits
     return new_logits

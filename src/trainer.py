@@ -124,18 +124,15 @@ def parse(
     relation_logits: np.ndarray,
     lengths: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    mask = np.zeros_like(head_logits)
-    for i, length in enumerate(lengths):
-        mask[i, :length, :length] = 1
-    mask[:, np.arange(mask.shape[1]), np.arange(mask.shape[1])] = 0
-
     def softmax(x, axis=-1):
         y = np.exp(x - x.max(axis=axis, keepdims=True))
         y /= y.sum(axis=axis, keepdims=True)
         return y
 
-    head_probs = softmax(np.where(mask, head_logits, -np.inf))
-    heads = np.full((len(lengths), max(lengths)), -100)
+    mask = np.zeros_like(head_logits)
+    mask[:, np.arange(mask.shape[1]), np.arange(mask.shape[1])] = -np.inf
+    head_probs = softmax(head_logits + mask)
+    heads = np.full(head_probs.shape[:2], -100)
     for i, length in enumerate(lengths):
         heads[i, :length] = chuliu_edmonds_one_root(head_probs[i, :length, :length])
     heads[:, 0] = -100
