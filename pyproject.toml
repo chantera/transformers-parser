@@ -1,6 +1,10 @@
 [tool.ruff]
 src = ["src"]
 line-length = 99
+extend-exclude = [
+  "src/chuliu_edmonds.py",
+  "eval/conll18_ud_eval.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "B", "I"]
