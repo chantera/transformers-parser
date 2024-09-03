@@ -16,7 +16,7 @@ from transformers import (
 )
 from transformers.utils import check_min_version
 
-from models import BertForParsing
+from models.modeling_bert import BertForParsing
 from tokenization_utils import batch_prepare_for_model, batch_tokenize_pretokenized_input
 from trainer import Trainer, TrainingArguments
 from training_utils import LoggerCallback, setup_logger

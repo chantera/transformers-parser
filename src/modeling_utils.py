@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
-from transformers.models.bert import BertModel, BertPreTrainedModel
+from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import ModelOutput
 
 
@@ -144,17 +144,24 @@ class WordPooler(nn.Module):
         return output
 
 
-class BertForParsing(BertPreTrainedModel):
+class PreTrainedModelForParsing(PreTrainedModel):
     def __init__(self, config, output_length: Optional[int] = None):
         super().__init__(config)
         self.output_length = output_length
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self._init_encoder(config)
         self.pooler = WordPooler()
         self.head_scorer = BiaffineScorer(config, num_labels=1)
         self.relation_scorer = BiaffineScorer(config, num_labels=config.num_labels)
 
         self.post_init()
+
+    def _init_encoder(self, config):
+        raise NotImplementedError
+
+    @property
+    def encoder(self):
+        return getattr(self, self.base_model_prefix)
 
     def _init_weights(self, module):
         if isinstance(module, PairwiseBilinear):
@@ -179,7 +186,7 @@ class BertForParsing(BertPreTrainedModel):
     ) -> Union[Tuple[torch.Tensor], ParsingModelOutput]:
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.bert(
+        outputs = self.encoder(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
