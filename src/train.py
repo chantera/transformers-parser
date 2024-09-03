@@ -16,7 +16,7 @@ from transformers import (
 )
 from transformers.utils import check_min_version
 
-from models.modeling_bert import BertForParsing
+from models import AutoModelForParsing
 from tokenization_utils import batch_prepare_for_model, batch_tokenize_pretokenized_input
 from trainer import Trainer, TrainingArguments
 from training_utils import LoggerCallback, setup_logger
@@ -56,7 +56,7 @@ def main(args: Arguments, training_args: TrainingArguments):
     config.classifier_hidden_size = 512
     config.classifier_dropout = 0.5
     # model = AutoModel.from_pretrained(args.model, config=config)
-    model = BertForParsing.from_pretrained(args.model, config=config)
+    model = AutoModelForParsing.from_pretrained(args.model, config=config)
 
     trainer = Trainer(
         model=model,
