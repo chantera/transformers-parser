@@ -40,17 +40,33 @@ def main(args: Arguments, training_args: TrainingArguments):
     logger.info(f"training args: {training_args}")
     set_seed(training_args.seed)
 
-    raw_dataset = load_dataset(args.dataset, detokenize=True, cache_dir=args.cache_dir)
+    raw_dataset = load_dataset(args.dataset, cache_dir=args.cache_dir)
 
     config = AutoConfig.from_pretrained(args.model)
     if config.label2id == PretrainedConfig().label2id:
-        label_list = raw_dataset["train"].features["deprel"].feature.names
+        if hasattr(raw_dataset["train"].features["deprel"].feature, "names"):
+            label_list = raw_dataset["train"].features["deprel"].feature.names
+        else:
+            label_set = set()
+            for dataset in raw_dataset.values():
+                for example in dataset:
+                    label_set.update(example["deprel"])
+            label_list = sorted(label_set)
+
         config.label2id = {label: i for i, label in enumerate(label_list)}
         config.id2label = {i: label for i, label in enumerate(label_list)}
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
     with training_args.main_process_first(desc="dataset map pre-processing"):
+        if raw_dataset["train"].features["deprel"].feature.dtype == "string":
+
+            def map_labels(example):
+                example["deprel"] = [config.label2id[relation] for relation in example["deprel"]]
+                return example
+
+            raw_dataset = raw_dataset.map(map_labels)
+
         dataset = raw_dataset.map(partial(preprocess, tokenizer=tokenizer), batched=True)
 
     config.word_pooling = "first"

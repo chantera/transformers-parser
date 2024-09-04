@@ -11,7 +11,7 @@ from nltk.tokenize.treebank import TreebankWordDetokenizer
 
 @dataclass
 class PtbWsjConfig(datasets.BuilderConfig):
-    detokenize: bool = False
+    detokenize: bool = True
     encoding: str = "utf-8"
     encoding_errors: Optional[str] = None
 
