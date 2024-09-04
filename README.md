@@ -20,7 +20,7 @@ A dataset used for the training script must be a collection of entries, each of 
 
 - `text` (string): *raw text*
 - `form` (list of string): *words*
-- `head` (list of int): *head indices*
+- `head` (list of integer): *head indices*
 - `deprel` (list of string): *dependency relations*
 
 Below is an example represented in JSON:
@@ -88,10 +88,11 @@ Below is an example of evaluating predictions on the Penn Treebank:
 $ python eval/evaluate.py ./data/ptb_wsj/test.conll ./output/test_predictions.jsonl
 ```
 
-### Performance
+## Performance
 
-#### PTB
+### PTB
 
 | Model         | UAS   | LAS   |
 | ------------- | :---: | :---: |
 | roberta-large | 97.30 | 95.75 |
+

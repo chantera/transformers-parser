@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from datasets import load_dataset
 from transformers import (
@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 class Arguments:
     dataset: str = "data/ptb_wsj"
     model: str = "bert-base-uncased"
+    word_pooling: Literal["mean", "first"] = "first"
+    classifier_hidden_size: int = 512
+    classifier_dropout: float = 0.3
     cache_dir: Optional[str] = None
 
 
@@ -69,10 +72,10 @@ def main(args: Arguments, training_args: TrainingArguments):
 
         dataset = raw_dataset.map(partial(preprocess, tokenizer=tokenizer), batched=True)
 
-    config.word_pooling = "first"
-    config.classifier_hidden_size = 512
-    config.classifier_dropout = 0.5
-    # model = AutoModel.from_pretrained(args.model, config=config)
+    for attr in ["word_pooling", "classifier_hidden_size", "classifier_dropout"]:
+        if getattr(config, attr, None) is None:
+            setattr(config, attr, getattr(args, attr))
+
     model = AutoModelForParsing.from_pretrained(args.model, config=config)
 
     trainer = Trainer(
