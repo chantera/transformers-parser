@@ -99,8 +99,11 @@ class BiaffineScorer(nn.Module):
 
 
 class WordPooler(nn.Module):
-    def __init__(self):
+    def __init__(self, reduce: str = "mean"):
         super().__init__()
+        if reduce not in {"mean", "first"}:
+            raise ValueError(f"reduce must be one of ['mean', 'first'], but got '{reduce}'")
+        self.reduce = reduce
 
     def forward(self, hidden_states: torch.Tensor, word_offsets: torch.Tensor) -> torch.Tensor:
         batch_size, source_length, dim = hidden_states.size()
@@ -122,7 +125,12 @@ class WordPooler(nn.Module):
                     yield (i, ofs)
                     prev_ofs = ofs
 
-        take = _take_first
+        if self.reduce == "mean":
+            take = _take_all
+        elif self.reduce == "first":
+            take = _take_first
+        else:
+            raise ValueError(f"invalid reduce method: {self.reduce}")
 
         source_indices = []
         target_indices = []
@@ -150,7 +158,7 @@ class PreTrainedModelForParsing(PreTrainedModel):
         self.output_length = output_length
 
         self._init_encoder(config)
-        self.pooler = WordPooler()
+        self.pooler = WordPooler(reduce=getattr(config, "word_pooling", "mean"))
         self.head_scorer = BiaffineScorer(config, num_labels=1)
         self.relation_scorer = BiaffineScorer(config, num_labels=config.num_labels)
 

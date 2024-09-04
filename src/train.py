@@ -53,6 +53,7 @@ def main(args: Arguments, training_args: TrainingArguments):
     with training_args.main_process_first(desc="dataset map pre-processing"):
         dataset = raw_dataset.map(partial(preprocess, tokenizer=tokenizer), batched=True)
 
+    config.word_pooling = "first"
     config.classifier_hidden_size = 512
     config.classifier_dropout = 0.5
     # model = AutoModel.from_pretrained(args.model, config=config)
